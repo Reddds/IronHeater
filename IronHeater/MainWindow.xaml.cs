@@ -18,6 +18,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 
 namespace IronHeater
 {
@@ -29,11 +30,36 @@ namespace IronHeater
         SerialPort _serialPort;
         MainViewModel _mainModel;
         Stopwatch _watch = new Stopwatch();
+        /// <summary>
+        /// Таймер проверяет есть ли соединение с портом и переподключается если нет
+        /// </summary>
+        DispatcherTimer _heartBeat;
 
         public MainWindow()
         {
             InitializeComponent();
 
+            _heartBeat = new DispatcherTimer();
+            _heartBeat.Interval = TimeSpan.FromMilliseconds(500);
+            _heartBeat.Tick += _heartBeat_Tick;
+
+        }
+
+        private void _heartBeat_Tick(object? sender, EventArgs e)
+        {
+            if (_serialPort == null)
+                return;
+
+            if (_serialPort.IsOpen)
+                return;
+
+            var connWin = new ConnectingWindow(_serialPort);
+            if (connWin.ShowDialog() != true)
+            {
+                // Если пользователь отказался от подключения
+                _heartBeat.Stop();
+                //throw new Exception("Ошибка подключчения к порту");
+            }
         }
 
         void OpenPort()
@@ -54,8 +80,18 @@ namespace IronHeater
             _serialPort.WriteTimeout = 50;
 
             _serialPort.DataReceived += _serialPort_DataReceived;
+            _serialPort.ErrorReceived += _serialPort_ErrorReceived;
 
-            _serialPort.Open();
+             var connWin = new ConnectingWindow(_serialPort);
+            if(connWin.ShowDialog() != true)
+            {
+                throw new Exception("Ошибка подключчения к порту");
+            }
+        }
+
+        private void _serialPort_ErrorReceived(object sender, SerialErrorReceivedEventArgs e)
+        {
+            throw new NotImplementedException();
         }
 
         readonly Regex reT = new(@"^t1=(?<Val1>[0-9\.]+)t2=(?<Val2>[0-9\.]+)$");
@@ -113,7 +149,7 @@ namespace IronHeater
                 catch (Exception ex)
                 {
 
-                    throw;
+                    //throw;
                 }
 
             }
@@ -145,12 +181,24 @@ namespace IronHeater
 
 
 
-            OpenPort();
-
             _mainModel = new MainViewModel();
             DataContext = _mainModel;
 
             _watch.Start();
+
+            try
+            {
+                OpenPort();
+                _heartBeat.Start();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.ToString());
+                Application.Current.Shutdown();
+                return;
+            }
+
+
         }
     }
 
